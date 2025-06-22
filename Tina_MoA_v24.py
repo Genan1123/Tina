@@ -4,15 +4,13 @@
 # 核心改进
 # 1. 评分显示优化：显示每个模型的名称和具体分数
 # 2. 错误处理增强：确保所有5个模型都参与评分
-# 3. 执行效率提升：简化任务直接执行，减少循环
+# 3. 执行效率提升：简化流程循环
 # 4. 日志记录改进：记录每个模型的详细响应
-# 5. 智能任务识别：简单任务跳过复杂流程
 # (Revisions from Coding Partner to fix premature completion)
 # ------------------------------------------------------------
-import os, sys, asyncio, json, re, subprocess, glob, shutil
+import os, asyncio, json, re, subprocess
 from datetime import datetime
 from typing import List, Literal, Dict, Any, Tuple
-from collections import Counter, defaultdict
 import traceback
 
 import numpy as np
@@ -22,7 +20,6 @@ from rich.text import Text
 from rich.live import Live
 from rich.spinner import Spinner
 from rich.table import Table
-from rich.columns import Columns
 import together
 
 # ---------- 常量 & 配置 ----------
@@ -50,20 +47,12 @@ States: DISCOVER_FILES → INSTALL_TOOLS → RUN_QC → REPORT → DONE
 If state=="DONE" and validated==true, output TERMINATE."""
 
 AGGREGATOR_SYSTEM_PROMPT = "Merge suggestions into ONE concise actionable sub-task."
-SELF_CRITIQUE_SYSTEM_PROMPT = "Point out one concrete flaw or risk."
 CRITIC_SYSTEM_PROMPT = """Score the plan 0-10. Return ONLY: {"score":N,"reason":"one sentence"}"""
 EXPERT_SYSTEM_PROMPT = """React agent. Return ONLY JSON:
 {"thought":"...","action":{"tool_name":"execute_bash|task_complete","parameters":{...}}}
 Only use 'task_complete' when the specific sub-task is fully accomplished.
 """
 
-# 简单任务检测
-SIMPLE_TASK_PATTERNS = [
-    r"generate.*fastq",
-    r"create.*file",
-    r"生成.*文件",
-    r"make.*reads"
-]
 
 API_KEY = os.getenv("TOGETHER_API_KEY") or os.getenv("TINA_API_KEY") 
 if not API_KEY:
@@ -73,7 +62,6 @@ TIMEOUT_CMD = 300  # 减少超时时间
 MAX_PLANNER_ROUNDS = 10  # 减少最大轮数
 MAX_REACT_STEPS = 15  # 减少React步骤
 CRITIC_PASS = 7  # 降低通过门槛
-MAX_TOKENS_PER_TURN = 3000  # 减少token数
 
 console = Console()
 log_dir = "tina_logs"
@@ -139,10 +127,6 @@ async def llm(model: str, system: str, user: str, temperature: float = 0.3, max_
         log(error_msg)
         return error_msg
 
-def is_simple_task(goal: str) -> bool:
-    """检测是否为简单任务"""
-    goal_lower = goal.lower()
-    return any(re.search(pattern, goal_lower) for pattern in SIMPLE_TASK_PATTERNS)
 
 def parse_json_score(txt: str) -> Tuple[int, str]:
     """解析评分JSON，返回(分数, 原因)"""
@@ -242,56 +226,6 @@ async def critic_vote_enhanced(goal: str, plan: str) -> Tuple[bool, List[Dict]]:
     
     return passed, results
 
-async def simple_task_execution(goal: str) -> bool:
-    """直接执行简单任务"""
-    panel(f"检测到简单任务，直接执行：{goal}", "🚀 快速模式", "green")
-    
-    # 对于生成fastq文件的任务
-    if "fastq" in goal.lower() or "generate" in goal.lower():
-        # 生成一个简单的fastq文件
-        cmd = """
-# 生成随机fastq文件
-cat > generate_random_fastq.py << 'EOF'
-import random
-import sys
-
-def generate_random_seq(length):
-    return ''.join(random.choice('ACGT') for _ in range(length))
-
-def generate_random_qual(length):
-    return ''.join(chr(random.randint(33, 73)) for _ in range(length))
-
-# 生成1000个reads
-num_reads = 1000
-read_length = 150
-
-with open('random_reads_R1.fastq', 'w') as f1, open('random_reads_R2.fastq', 'w') as f2:
-    for i in range(num_reads):
-        seq1 = generate_random_seq(read_length)
-        seq2 = generate_random_seq(read_length)
-        qual1 = generate_random_qual(read_length)
-        qual2 = generate_random_qual(read_length)
-        
-        # R1
-        f1.write(f'@read_{i}/1\\n{seq1}\\n+\\n{qual1}\\n')
-        # R2
-        f2.write(f'@read_{i}/2\\n{seq2}\\n+\\n{qual2}\\n')
-
-print(f"Generated {num_reads} paired-end reads")
-print("Files: random_reads_R1.fastq, random_reads_R2.fastq")
-EOF
-
-python generate_random_fastq.py
-ls -lh random_reads_*.fastq
-head -n 8 random_reads_R1.fastq
-"""
-        result = run_bash(cmd)
-        
-        if "Generated" in result and "random_reads" in result:
-            panel("✅ 成功生成随机FASTQ文件！", "🎉 任务完成", "green")
-            return True
-    
-    return False
 
 async def react_execute_improved(sub_task: str, project_state: Dict[str, Any]) -> bool:
     """改进的ReAct执行，返回是否成功"""
@@ -362,7 +296,6 @@ async def main():
     console.print(Panel(
         "[bold cyan]Tina v17.0 – 改进版 MoA Agent[/bold cyan]\n"
         "• 详细评分显示\n"
-        "• 简单任务快速执行\n"
         "• 更高效的执行流程",
         border_style="blue"
     ))
@@ -374,12 +307,6 @@ async def main():
                 break
             
             log(f"User goal: {goal}")
-            
-            # 检测简单任务
-            if is_simple_task(goal):
-                success = await simple_task_execution(goal)
-                if success:
-                    continue
             
             # 复杂任务流程
             project_state = {
