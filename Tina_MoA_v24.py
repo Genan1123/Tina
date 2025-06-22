@@ -9,10 +9,10 @@
 # 5. 智能任务识别：简单任务跳过复杂流程
 # (Revisions from Coding Partner to fix premature completion)
 # ------------------------------------------------------------
-import os, sys, asyncio, json, re, subprocess, glob, shutil
+import os, sys, asyncio, json, re, subprocess
 from datetime import datetime
 from typing import List, Literal, Dict, Any, Tuple
-from collections import Counter, defaultdict
+
 import traceback
 
 import numpy as np
